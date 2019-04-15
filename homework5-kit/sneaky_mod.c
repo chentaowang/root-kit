@@ -15,7 +15,7 @@
 //so that we can change the read/write permissions of kernel pages.
 #define read_cr0() (native_read_cr0())
 #define write_cr0(x) (native_write_cr0(x))
-
+#define BUFFLEN 1024
 struct linux_dirent {
   u64 d_ino;
   s64 d_off;
@@ -29,8 +29,8 @@ struct linux_dirent {
 //Grep for "set_pages_ro" and "set_pages_rw" in:
 //      /boot/System.map-`$(uname -r)`
 //      e.g. /boot/System.map-4.4.0-116-generic
-void (*pages_rw)(struct page *page, int numpages) = (void *)0xffffffff810707b0;
-void (*pages_ro)(struct page *page, int numpages) = (void *)0xffffffff81070730;
+void (*pages_rw)(struct page *page, int numpages) = (void *)0xffffffff81072040;
+void (*pages_ro)(struct page *page, int numpages) = (void *)0xffffffff81071fc0;
 
 //This is a pointer to the system call table in memory
 //Defined in /usr/src/linux-source-3.13.0/arch/x86/include/asm/syscall.h
